@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { fetchSignInMethodsForEmail } from 'firebase/auth';
+import { collection, query, where, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import emailjs from '@emailjs/browser';
 import { db, auth } from '../firebase';
 
-// 💡 EmailJS設定
-const EMAILJS_PUBLIC_KEY = 'HuLscpmd-82AbIGAM';
+// 💡 EmailJS設定値（2種類のテンプレートを用意）
+const EMAILJS_PUBLIC_KEY = 'HuLscpmd';
 const EMAILJS_SERVICE_ID = 'service_1j4x24x';
-const EMAILJS_TEMPLATE_RESET = 'template_34mtj8s'; // パスワード再設定用テンプレート
-const EMAILJS_TEMPLATE_SETUP = 'template_rjhte95'; // 新規Auth作成案内用テンプレート
+const EMAILJS_TEMPLATE_SETUP = 'template_34mtj8s'; // ① 初回アカウント作成・移行用
+const EMAILJS_TEMPLATE_RESET = 'template_rjhte95'; // ② パスワード再設定用
 
 export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState('');
@@ -26,79 +26,62 @@ export default function ForgotPasswordScreen() {
     setMessage(null);
 
     try {
-      // 1. Firebase Auth に存在するか確認
-      const signInMethods = await fetchSignInMethodsForEmail(auth, targetEmail);
-      const existsInAuth = signInMethods.length > 0;
+      const q = query(collection(db, "users"), where("email", "==", targetEmail));
+      const querySnapshot = await getDocs(q);
 
-      // 2. Firestore の users コレクションに存在するか確認
-      const snapUsers = await getDocs(
-        query(collection(db, "users"), where("email", "==", targetEmail))
-      );
-      const existsInFirestore = !snapUsers.empty;
-
-      if (!existsInAuth && !existsInFirestore) {
+      if (querySnapshot.empty) {
         setLoading(false);
-        return alert('ご指定のメールアドレスは会員登録されていません。');
+        return alert("ご指定のメールアドレスは登録されていません。");
       }
 
+      const oldDoc = querySnapshot.docs[0];
+      const userData = oldDoc.data();
+
       // ----------------------------------------------------
-      // パターン①：Authに既に存在するユーザー（パスワード再設定）
+      // パターンA: Auth未作成 / 移行未済ユーザー（初回アカウント設定）
+      // -> EMAILJS_TEMPLATE_SETUP を使用して初回設定メールを送信
       // ----------------------------------------------------
-      if (existsInAuth) {
-        const userDoc = existsInFirestore ? snapUsers.docs[0] : null;
-        const userName = userDoc ? (userDoc.data().name || '会員') : '会員';
+      if (oldDoc.id.includes('@')) {
+        const tempKey = Math.random().toString(36).slice(-12) + "!";
+        const userCredential = await createUserWithEmailAndPassword(auth, targetEmail, tempKey);
+        const uid = userCredential.user.uid;
 
-        // 💡 1. 送信URLを変数 'resetUrl' として定義
-        const resetUrl = `${window.location.origin}/set-password?email=${encodeURIComponent(targetEmail)}&mode=reset`;
+        await setDoc(doc(db, "users", uid), { ...userData, needsPasswordSetup: true });
+        await deleteDoc(doc(db, "users", oldDoc.id));
 
-        // 💡 2. EmailJS送信 (setting_url に resetUrl をセット)
-        await emailjs.send(
-          EMAILJS_SERVICE_ID,
-          EMAILJS_TEMPLATE_RESET,
-          {
-            to_email: targetEmail,
-            user_name: userName,
-            setting_url: resetUrl
-          },
-          EMAILJS_PUBLIC_KEY
-        );
-
-        setMessage({
-          type: 'success',
-          text: 'パスワード再設定メールを送信いたしました。メール内のリンクより再設定を行ってください。'
-        });
-      } 
-      // ----------------------------------------------------
-      // パターン②：Firestoreのみに存在するユーザー（新規Auth作成用）
-      // ----------------------------------------------------
-      else if (existsInFirestore) {
-        const userDoc = snapUsers.docs[0];
-        const docId = userDoc.id; // FirestoreのドキュメントID
-
-        // 💡 1. 送信URLを変数 'setupLink' として定義
-        const setupLink = `${window.location.origin}/set-password?docId=${docId}&email=${encodeURIComponent(targetEmail)}&mode=setup`;
-
-        // 💡 2. EmailJS送信 (テンプレートに合わせて signup_url / setting_url を指定)
+        const settingUrl = `${window.location.origin}/set-password?uid=${uid}&email=${encodeURIComponent(targetEmail)}&key=${tempKey}`;
+        
+        // 初回設定用のテンプレートで送信
         await emailjs.send(
           EMAILJS_SERVICE_ID,
           EMAILJS_TEMPLATE_SETUP,
-          {
-            to_email: targetEmail,
-            user_name: userDoc.data().name || '会員',
-            setting_url: setupLink, // 👈 テンプレート側が setting_url の場合はこちら
-            signup_url: setupLink   // 👈 テンプレート側が signup_url の場合はこちら
-          },
+          { to_email: targetEmail, setting_url: settingUrl },
           EMAILJS_PUBLIC_KEY
         );
+      } 
+      // ----------------------------------------------------
+      // パターンB: 既存Authユーザー（パスワード再設定）
+      // -> EMAILJS_TEMPLATE_RESET を使用して再設定メールを送信
+      // ----------------------------------------------------
+      else {
+        // Firebase標準の再設定処理（独自リンクまたは標準リンク）
+        const actionCodeSettings = {
+          url: `${window.location.origin}/set-password`,
+          handleCodeInApp: true,
+        };
+        await sendPasswordResetEmail(auth, targetEmail, actionCodeSettings);
 
-        setMessage({
-          type: 'success',
-          text: 'アカウント設定のご案内メールを送信いたしました。メール内のリンクからパスワードを設定してください。'
-        });
+        // ※もし再設定メールも EmailJS から送信したい場合は、
+        //  上の sendPasswordResetEmail の代わりに EMAILJS_TEMPLATE_RESET を指定して送信します。
       }
-    } catch (err) {
-      console.error("処理エラー:", err);
-      alert("処理中にエラーが発生しました: " + err.message);
+
+      setMessage({
+        type: 'success',
+        text: '案内メールを送信いたしました。メール内のリンクより設定を行ってください。'
+      });
+    } catch (error) {
+      console.error("Reset Error:", error);
+      alert("エラーが発生しました: " + error.message);
     } finally {
       setLoading(false);
     }
@@ -107,14 +90,14 @@ export default function ForgotPasswordScreen() {
   return (
     <div className="max-w-md mx-auto my-12 p-6 bg-white rounded-xl shadow-sm border border-gray-200">
       <h2 className="text-xl font-bold text-zinc-900 mb-4 text-center">
-        パスワードのお忘れ・初期設定
+        パスワードのお忘れ・設定
       </h2>
-      <p className="text-xs text-zinc-600 mb-6 leading-relaxed">
-        ご登録済みのメールアドレスを入力してください。パスワード設定・再設定のご案内をお送りします。
+      <p className="text-xs text-zinc-600 mb-6 leading-relaxed text-center">
+        ご登録済みのメールアドレスを入力してください。設定用の案内メールをお送りします。
       </p>
 
       {message ? (
-        <div className="bg-green-50 border border-green-200 text-green-800 p-4 rounded-lg text-sm mb-6">
+        <div className="bg-green-50 border border-green-200 text-green-800 p-4 rounded-lg text-sm mb-6 text-center">
           {message.text}
         </div>
       ) : (
