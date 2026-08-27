@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { signInWithEmailAndPassword, confirmPasswordReset, verifyPasswordResetCode } from 'firebase/auth';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../firebase';
 
 export default function SetPasswordScreen() {
