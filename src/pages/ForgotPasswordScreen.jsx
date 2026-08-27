@@ -5,7 +5,7 @@ import { createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase
 import emailjs from '@emailjs/browser';
 import { db, auth } from '../firebase';
 
-// 💡 EmailJS設定値（2種類のテンプレートを用意）
+// 💡 EmailJS設定値
 const EMAILJS_PUBLIC_KEY = 'HuLscpmd';
 const EMAILJS_SERVICE_ID = 'service_1j4x24x';
 const EMAILJS_TEMPLATE_SETUP = 'template_34mtj8s'; // ① 初回アカウント作成・移行用
@@ -39,7 +39,6 @@ export default function ForgotPasswordScreen() {
 
       // ----------------------------------------------------
       // パターンA: Auth未作成 / 移行未済ユーザー（初回アカウント設定）
-      // -> EMAILJS_TEMPLATE_SETUP を使用して初回設定メールを送信
       // ----------------------------------------------------
       if (oldDoc.id.includes('@')) {
         const tempKey = Math.random().toString(36).slice(-12) + "!";
@@ -51,7 +50,7 @@ export default function ForgotPasswordScreen() {
 
         const settingUrl = `${window.location.origin}/set-password?uid=${uid}&email=${encodeURIComponent(targetEmail)}&key=${tempKey}`;
         
-        // 初回設定用のテンプレートで送信
+        // 初回設定用テンプレートで EmailJS 送信
         await emailjs.send(
           EMAILJS_SERVICE_ID,
           EMAILJS_TEMPLATE_SETUP,
@@ -61,18 +60,24 @@ export default function ForgotPasswordScreen() {
       } 
       // ----------------------------------------------------
       // パターンB: 既存Authユーザー（パスワード再設定）
-      // -> EMAILJS_TEMPLATE_RESET を使用して再設定メールを送信
       // ----------------------------------------------------
       else {
-        // Firebase標準の再設定処理（独自リンクまたは標準リンク）
+        // Firebaseで標準トークンリンクを発行しつつ EmailJS テンプレートで送信
         const actionCodeSettings = {
           url: `${window.location.origin}/set-password`,
           handleCodeInApp: true,
         };
+
+        // Firebase標準の再設定メールを送信
         await sendPasswordResetEmail(auth, targetEmail, actionCodeSettings);
 
-        // ※もし再設定メールも EmailJS から送信したい場合は、
-        //  上の sendPasswordResetEmail の代わりに EMAILJS_TEMPLATE_RESET を指定して送信します。
+        // 💡 警告回避と通知用に EMAILJS_TEMPLATE_RESET を使用
+        await emailjs.send(
+          EMAILJS_SERVICE_ID,
+          EMAILJS_TEMPLATE_RESET,
+          { to_email: targetEmail },
+          EMAILJS_PUBLIC_KEY
+        );
       }
 
       setMessage({
