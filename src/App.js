@@ -1,14 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import { collection, query, orderBy, getDocs, where, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db, auth } from './firebase'; // 💡 firebase.js から auth をインポート
-import { 
-  signInWithEmailAndPassword, 
-  onAuthStateChanged, 
-  setPersistence, 
-  browserLocalPersistence,
-  signOut 
-} from 'firebase/auth';
+import { db, auth } from './firebase'; 
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 
 import NavigationHeader from './components/NavigationHeader';
 import Footer from './components/Footer';
@@ -28,12 +22,13 @@ import { GoogleReCaptchaProvider } from 'react-google-recaptcha-v3';
 function AppContent() {
   const navigate = useNavigate();
 
-  // 認証状態
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [currentUser, setCurrentUser] = useState(null);
-  const [authChecking, setAuthChecking] = useState(true); // 💡 初回の認証状態チェック中フラグ
+  // 🔑 認証状態の一元管理（LocalStorage と Firebase Auth のハイブリッド）
+  const [currentUser, setCurrentUser] = useState(() => {
+    const savedUser = localStorage.getItem('petcpr_user');
+    return savedUser ? JSON.parse(savedUser) : null;
+  });
+  const isLoggedIn = !!currentUser;
+  const [authChecking, setAuthChecking] = useState(true);
 
   // 一般公開用データ
   const [pages, setPages] = useState([]);         
@@ -59,56 +54,57 @@ function AppContent() {
   const [openDropdown, setOpenDropdown] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // 💡 リロード後もログイン状態を維持する処理（Firebase Auth 監視）
+  // 💡 ログイン状態の同期（LocalStorage 変更イベント ＆ Firebase Auth 監視）
   useEffect(() => {
-    // ログイン状態をローカルストレージ（ブラウザ閉じても保持）に設定
-    setPersistence(auth, browserLocalPersistence).then(() => {
-      const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
-        if (authUser) {
-          // Firestore から該当ユーザー情報を取得
-          try {
-            const snapUsers = await getDocs(
-              query(collection(db, "users"), where("email", "==", authUser.email))
-            );
+    const syncUserSession = () => {
+      const savedUser = localStorage.getItem('petcpr_user');
+      if (savedUser) {
+        setCurrentUser(JSON.parse(savedUser));
+      } else {
+        setCurrentUser(null);
+      }
+    };
 
-            if (!snapUsers.empty) {
-              const userDoc = snapUsers.docs[0];
-              setCurrentUser({ id: userDoc.id, ...userDoc.data() });
-            } else {
-              setCurrentUser({
-                id: authUser.uid,
-                email: authUser.email,
-                name: authUser.displayName || '会員'
-              });
-            }
-            setIsLoggedIn(true);
-          } catch (e) {
-            console.error("ユーザー情報の取得エラー:", e);
+    // 1. LocalStorage の手動ログイン変更を検知
+    window.addEventListener('storage', syncUserSession);
+
+    // 2. Firebase Auth 側の状態監視（補助）
+    const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
+      if (authUser && !localStorage.getItem('petcpr_user')) {
+        try {
+          const snapUsers = await getDocs(
+            query(collection(db, "users"), where("email", "==", authUser.email))
+          );
+          let userData = { id: authUser.uid, email: authUser.email, name: authUser.displayName || '会員' };
+          if (!snapUsers.empty) {
+            const userDoc = snapUsers.docs[0];
+            userData = { id: userDoc.id, ...userDoc.data() };
           }
-        } else {
-          setIsLoggedIn(false);
-          setCurrentUser(null);
+          setCurrentUser(userData);
+          localStorage.setItem('petcpr_user', JSON.stringify(userData));
+        } catch (e) {
+          console.error("ユーザー情報の取得エラー:", e);
         }
-        setAuthChecking(false);
-      });
-
-      return () => unsubscribe();
-    }).catch((err) => {
-      console.error("Persistence 設定エラー:", err);
+      }
       setAuthChecking(false);
     });
+
+    setAuthChecking(false);
+
+    return () => {
+      window.removeEventListener('storage', syncUserSession);
+      unsubscribe();
+    };
   }, []);
 
-  // 🌐 誰でも閲覧できる公開データの取得
+  // 🌐 一般公開データの取得
   const fetchHpData = async () => {
     try {
       setLoading(true);
       
-      // ページ一覧
       const snapPages = await getDocs(query(collection(db, "pages"), orderBy("order", "asc")));
       setPages(snapPages.docs.map(d => ({ id: d.id, ...d.data() })));
 
-      // お知らせ
       let snapNews = await getDocs(query(collection(db, "news"), where("status", "==", "public"), orderBy("publishedAt", "desc")));
       let newsData = snapNews.docs.map(d => ({ id: d.id, ...d.data() }));
       if (newsData.length === 0) {
@@ -117,7 +113,6 @@ function AppContent() {
       }
       setNews(newsData);
 
-      // Instagram
       let snapInsta = await getDocs(query(collection(db, "instagram"), where("status", "==", "public"), orderBy("createdAt", "desc")));
       let instaData = snapInsta.docs.map(d => ({ id: d.id, ...d.data() }));
       if (instaData.length === 0) {
@@ -126,7 +121,6 @@ function AppContent() {
       }
       setInstagram(instaData);
 
-      // FAQ一覧の取得
       try {
         const snapFaq = await getDocs(query(collection(db, "faqs"), orderBy("order", "asc")));
         setFaqList(snapFaq.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -135,16 +129,13 @@ function AppContent() {
         setFaqList(snapFaqFallback.docs.map(d => ({ id: d.id, ...d.data() })));
       }
 
-      // 🎁 会員特典設定の取得
       const snapBenefits = await getDocs(collection(db, "settings"));
       const benefitsDoc = snapBenefits.docs.find(d => d.id === 'benefits');
       if (benefitsDoc) setBenefitsData(benefitsDoc.data());
 
-      // ライセンスマスター
       const snapLic = await getDocs(collection(db, "licenses_master"));
       setLicenseMaster(snapLic.docs.map(d => ({ id: d.id, ...d.data() })));
 
-      // 診断設問
       const snapDiag = await getDocs(query(collection(db, "diagnostic_questions"), orderBy("order", "asc")));
       setDiagQuestions(snapDiag.docs.map(d => ({ id: d.id, ...d.data() })));
 
@@ -159,7 +150,7 @@ function AppContent() {
     }
   };
 
-  // 🔒 ログイン時のみ掲示板データを取得
+  // 🔒 掲示板データ取得
   const fetchBbsData = async () => {
     try {
       const snapBbs = await getDocs(query(collection(db, "bbs"), orderBy("createdAt", "desc")));
@@ -169,67 +160,19 @@ function AppContent() {
     }
   };
 
-  // 初回読み込み（ログイン状態に関わらず実行）
   useEffect(() => {
     fetchHpData();
   }, []);
 
-  // ログイン時のみ掲示板取得
   useEffect(() => {
     if (isLoggedIn) fetchBbsData();
   }, [isLoggedIn]);
 
-  // 🔒 Firebase Auth を使ったログイン処理
-  const handleLoginSubmit = async (e) => {
-    e.preventDefault();
-    if (!loginEmail || !loginPassword) {
-      return alert("メールアドレスとパスワードを入力してください");
-    }
-
-    try {
-      const userCredential = await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
-      const authUser = userCredential.user;
-
-      const snapUsers = await getDocs(
-        query(collection(db, "users"), where("email", "==", loginEmail.trim()))
-      );
-
-      if (!snapUsers.empty) {
-        const userDoc = snapUsers.docs[0];
-        setCurrentUser({ id: userDoc.id, ...userDoc.data() });
-      } else {
-        setCurrentUser({
-          id: authUser.uid,
-          email: authUser.email,
-          name: authUser.displayName || '会員'
-        });
-      }
-
-      setIsLoggedIn(true);
-      // 💡 ① 「ログインいたしました！」のアラート（alert）を削除し、直接マイページへ移動
-      setLoginEmail('');
-      setLoginPassword('');
-      navigate('/mypage');
-
-    } catch (err) {
-      console.error("ログインエラー:", err);
-      if (
-        err.code === 'auth/invalid-credential' || 
-        err.code === 'auth/wrong-password' || 
-        err.code === 'auth/user-not-found'
-      ) {
-        alert("メールアドレスまたはパスワードが正しくありません。");
-      } else {
-        alert("ログイン処理中にエラーが発生しました: " + err.message);
-      }
-    }
-  };
-
   // ログアウト処理
   const handleLogoutAction = async () => {
     try {
-      await signOut(auth); // 💡 Firebase Auth からログアウト
-      setIsLoggedIn(false);
+      await signOut(auth).catch(() => {});
+      localStorage.removeItem('petcpr_user');
       setCurrentUser(null);
       alert("ログアウトしました");
       navigate('/');
@@ -238,12 +181,12 @@ function AppContent() {
     }
   };
 
-  // 掲示板投稿（テキストと画像URLを受け取る）
+  // 掲示板投稿
   const handlePostBbs = async (text, imageUrls = []) => {
     try {
       await addDoc(collection(db, "bbs"), {
-        userId: currentUser.id,
-        userName: currentUser.name,
+        userId: currentUser?.id || currentUser?.uid,
+        userName: currentUser?.name || '会員',
         content: text,
         imageUrls: imageUrls,
         createdAt: serverTimestamp()
@@ -308,7 +251,6 @@ function AppContent() {
     return `${baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`}media/?size=m`;
   };
 
-  // 初回認証チェック中はローディング表示（チラつき防止）
   if (authChecking) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center font-sans">
@@ -349,15 +291,8 @@ function AppContent() {
           />
         } />
 
-        <Route path="/login" element={
-          <LoginScreen 
-            loginEmail={loginEmail}
-            setLoginEmail={setLoginEmail}
-            loginPassword={loginPassword}
-            setLoginPassword={setLoginPassword}
-            handleLoginSubmit={handleLoginSubmit}
-          />
-        } />
+        {/* 💡 LoginScreen は独立したコンポーネントとして呼び出します */}
+        <Route path="/login" element={<LoginScreen />} />
 
         <Route path="/mypage" element={
           <MyPageScreen 

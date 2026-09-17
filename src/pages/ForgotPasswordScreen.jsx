@@ -1,122 +1,100 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
-import { createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import emailjs from '@emailjs/browser';
-import { db, auth } from '../firebase';
+import { db } from '../firebase';
 
-// 💡 EmailJS設定値
-const EMAILJS_PUBLIC_KEY = 'HuLscpmd';
-const EMAILJS_SERVICE_ID = 'service_1j4x24x';
-const EMAILJS_TEMPLATE_SETUP = 'template_34mtj8s'; // ① 初回アカウント作成・移行用
-const EMAILJS_TEMPLATE_RESET = 'template_rjhte95'; // ② パスワード再設定用
+// 💡 EmailJS の設定情報（環境変数または定数から読み込み）
+const EMAILJS_SERVICE_ID = process.env.REACT_APP_EMAILJS_SERVICE_ID || 'service_1j4x24x';
+const EMAILJS_TEMPLATE_ID = process.env.REACT_APP_EMAILJS_TEMPLATE_ID || 'template_34mtj8s';
+const EMAILJS_PUBLIC_KEY = process.env.REACT_APP_EMAILJS_PUBLIC_KEY || 'HuLscpmd-82AbIGAM';
 
 export default function ForgotPasswordScreen() {
-  const [email, setEmail] = useState('');
+  const [searchParams] = useSearchParams();
+  const initialEmail = searchParams.get('email') || '';
+
+  const [email, setEmail] = useState(initialEmail);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState(null);
+  const [message, setMessage] = useState('');
+  const [isError, setIsError] = useState(false);
+
   const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    const targetEmail = email.trim();
-    if (!targetEmail) return alert('メールアドレスを入力してください');
+  useEffect(() => {
+    if (initialEmail) {
+      setEmail(initialEmail);
+    }
+  }, [initialEmail]);
 
+  const handleSendMail = async (e) => {
+    e.preventDefault();
     setLoading(true);
-    setMessage(null);
+    setMessage('');
+    setIsError(false);
 
     try {
-      const q = query(collection(db, "users"), where("email", "==", targetEmail));
+      const trimmedEmail = email.trim();
+
+      // 1. DB照合（ユーザーが存在するか確認）
+      const q = query(collection(db, "users"), where("email", "==", trimmedEmail));
       const querySnapshot = await getDocs(q);
 
       if (querySnapshot.empty) {
+        setIsError(true);
+        setMessage("アカウントが存在しません。");
         setLoading(false);
-        return alert("ご指定のメールアドレスは登録されていません。");
+        return;
       }
 
-      const oldDoc = querySnapshot.docs[0];
-      const userData = oldDoc.data();
+      // 2. 本人のみが開けるパスワード設定画面のURLを生成
+      const resetUrl = `${window.location.origin}/set-password?email=${encodeURIComponent(trimmedEmail)}`;
 
-      // ----------------------------------------------------
-      // パターンA: Auth未作成 / 移行未済ユーザー（初回アカウント設定）
-      // ----------------------------------------------------
-      if (oldDoc.id.includes('@')) {
-        const tempKey = Math.random().toString(36).slice(-12) + "!";
-        const userCredential = await createUserWithEmailAndPassword(auth, targetEmail, tempKey);
-        const uid = userCredential.user.uid;
+      // 3. EmailJS でメール送信（認証セッションは作られません）
+      const templateParams = {
+        to_email: trimmedEmail,
+        email: trimmedEmail,
+        reset_url: resetUrl,
+        link: resetUrl
+      };
 
-        await setDoc(doc(db, "users", uid), { ...userData, needsPasswordSetup: true });
-        await deleteDoc(doc(db, "users", oldDoc.id));
+      await emailjs.send(
+        EMAILJS_SERVICE_ID,
+        EMAILJS_TEMPLATE_ID,
+        templateParams,
+        EMAILJS_PUBLIC_KEY
+      );
 
-        const settingUrl = `${window.location.origin}/set-password?uid=${uid}&email=${encodeURIComponent(targetEmail)}&key=${tempKey}`;
-        
-        // 初回設定用テンプレートで EmailJS 送信
-        await emailjs.send(
-          EMAILJS_SERVICE_ID,
-          EMAILJS_TEMPLATE_SETUP,
-          { to_email: targetEmail, setting_url: settingUrl },
-          EMAILJS_PUBLIC_KEY
-        );
-      } 
-      // ----------------------------------------------------
-      // パターンB: 既存Authユーザー（パスワード再設定）
-      // ----------------------------------------------------
-      else {
-        // Firebaseで標準トークンリンクを発行しつつ EmailJS テンプレートで送信
-        const actionCodeSettings = {
-          url: `${window.location.origin}/set-password`,
-          handleCodeInApp: true,
-        };
+      setIsError(false);
+      setMessage("パスワード設定用の案内メールを送信しました。届いたメール内のリンクから設定を行ってください。");
 
-        // Firebase標準の再設定メールを送信
-        await sendPasswordResetEmail(auth, targetEmail, actionCodeSettings);
-
-        // 💡 警告回避と通知用に EMAILJS_TEMPLATE_RESET を使用
-        await emailjs.send(
-          EMAILJS_SERVICE_ID,
-          EMAILJS_TEMPLATE_RESET,
-          { to_email: targetEmail },
-          EMAILJS_PUBLIC_KEY
-        );
-      }
-
-      setMessage({
-        type: 'success',
-        text: '案内メールを送信いたしました。メール内のリンクより設定を行ってください。'
-      });
     } catch (error) {
-      console.error("Reset Error:", error);
-      alert("エラーが発生しました: " + error.message);
+      console.error("EmailJS Error:", error);
+      setIsError(true);
+      setMessage("メール送信に失敗しました。設定情報をご確認ください。");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="max-w-md mx-auto my-12 p-6 bg-white rounded-xl shadow-sm border border-gray-200">
-      <h2 className="text-xl font-bold text-zinc-900 mb-4 text-center">
-        パスワードのお忘れ・設定
-      </h2>
-      <p className="text-xs text-zinc-600 mb-6 leading-relaxed text-center">
-        ご登録済みのメールアドレスを入力してください。設定用の案内メールをお送りします。
-      </p>
+    <div className="py-16 px-4 sm:px-6 lg:px-8 max-w-xl mx-auto flex-grow w-full">
+      <div className="text-center mb-8">
+        <h1 className="text-2xl font-bold text-zinc-900 mb-2">パスワード設定・再設定</h1>
+        <p className="text-xs text-zinc-500">
+          ご登録のメールアドレスを入力してください。パスワード設定用のリンクをお送りします。
+        </p>
+      </div>
 
-      {message ? (
-        <div className="bg-green-50 border border-green-200 text-green-800 p-4 rounded-lg text-sm mb-6 text-center">
-          {message.text}
-        </div>
-      ) : (
-        <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 sm:p-10">
+        <form onSubmit={handleSendMail} className="space-y-6">
           <div>
-            <label className="block text-xs font-bold text-zinc-700 mb-1">
-              メールアドレス
-            </label>
+            <label className="block text-xs font-bold text-zinc-700 mb-2">メールアドレス</label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="example@example.com"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              placeholder="example@petcpr.jp"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 placeholder-gray-300"
               required
             />
           </div>
@@ -124,20 +102,29 @@ export default function ForgotPasswordScreen() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-zinc-900 hover:bg-black text-white font-bold py-2.5 rounded-lg text-sm transition-colors disabled:bg-gray-400"
+            className="w-full bg-red-800 hover:bg-red-900 text-white font-bold py-3.5 rounded-lg text-sm shadow disabled:bg-gray-400"
           >
-            {loading ? '送信中...' : '送信する'}
+            {loading ? '送信中...' : '設定メールを送信'}
           </button>
         </form>
-      )}
 
-      <div className="mt-4 text-center">
-        <button
-          onClick={() => navigate('/login')}
-          className="text-xs text-zinc-500 hover:underline"
-        >
-          ← ログイン画面に戻る
-        </button>
+        {message && (
+          <div className={`mt-6 p-4 text-xs font-bold rounded-lg text-center border ${
+            isError ? 'bg-red-50 text-red-700 border-red-200' : 'bg-green-50 text-green-800 border-green-200'
+          }`}>
+            {message}
+          </div>
+        )}
+
+        <div className="mt-8 text-center">
+          <button
+            type="button"
+            onClick={() => navigate('/login')}
+            className="text-xs text-zinc-600 underline hover:text-zinc-900"
+          >
+            ログイン画面に戻る
+          </button>
+        </div>
       </div>
     </div>
   );
