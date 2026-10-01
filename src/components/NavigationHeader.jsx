@@ -41,7 +41,7 @@ const NavigationHeader = ({ rootPages, getChildPages, openDropdown, setOpenDropd
               >
                 <button 
                   onClick={() => !hasChildren && navigate(`/page/${root.slug}`)}
-                  className="px-3 py-2 rounded-md hover:bg-zinc-800 hover:text-red-500 transition-colors flex items-center"
+                  className="px-3 py-2 rounded-md hover:bg-zinc-800 hover:text-white transition-colors flex items-center"
                 >
                   {root.title} {hasChildren && <span className="ml-1 text-xs">▼</span>}
                 </button>
@@ -52,7 +52,7 @@ const NavigationHeader = ({ rootPages, getChildPages, openDropdown, setOpenDropd
                       <Link 
                         to={`/page/${root.slug}`}
                         onClick={() => setOpenDropdown(null)}
-                        className="w-full text-left block px-4 py-3 hover:bg-red-600 hover:text-white transition-colors border-b border-zinc-900 font-bold text-red-400"
+                        className="w-full text-left block px-4 py-3 hover:bg-red-600 hover:text-white transition-colors border-b border-zinc-900 font-bold text-white"
                       >
                         {root.title} 
                       </Link>
@@ -63,7 +63,7 @@ const NavigationHeader = ({ rootPages, getChildPages, openDropdown, setOpenDropd
                           onClick={() => setOpenDropdown(null)}
                           className="w-full text-left block px-4 py-3 hover:bg-red-600 hover:text-white transition-colors border-b border-zinc-900 last:border-0"
                         >
-                          └ {child.title}
+                          {child.title}
                         </Link>
                       ))}
                     </div>
@@ -106,7 +106,7 @@ const NavigationHeader = ({ rootPages, getChildPages, openDropdown, setOpenDropd
             return (
               <div key={root.id} className="space-y-1">
                 <div className="flex items-center justify-between w-full px-3 py-2.5 rounded-md hover:bg-zinc-800 text-base font-medium">
-                  <Link to={`/page/${root.slug}`} className="flex-grow hover:text-red-500">{root.title}</Link>
+                  <Link to={`/page/${root.slug}`} className="flex-grow hover:text-white">{root.title}</Link>
                   {hasChildren && (
                     <button onClick={() => setMobileDropdown(isDropdownOpen ? null : root.id)} className="p-1 text-zinc-400 hover:text-white">
                       {isDropdownOpen ? '▲' : '▼'}
@@ -117,7 +117,7 @@ const NavigationHeader = ({ rootPages, getChildPages, openDropdown, setOpenDropd
                   <div className="pl-4 bg-zinc-900/50 rounded-md border-l-2 border-zinc-700 space-y-1 py-1">
                     {children.map(child => (
                       <Link key={child.id} to={`/page/${child.slug}`} className="block px-3 py-2 rounded-md text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white">
-                        └ {child.title}
+                        {child.title}
                       </Link>
                     ))}
                   </div>
