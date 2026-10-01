@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, useNavigate } from 'react-router-dom';
+import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import { collection, query, orderBy, getDocs, where, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from './firebase'; 
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -12,6 +12,7 @@ import DynamicPageScreen from './pages/DynamicPageScreen';
 import LoginScreen from './pages/LoginScreen';
 import MyPageScreen from './pages/MyPageScreen';
 import ContactScreen from './pages/ContactScreen';
+import DiagUserScreen from './pages/DiagUserScreen';
 import BenefitsListScreen from './pages/BenefitsListScreen';
 import ForgotPasswordScreen from './pages/ForgotPasswordScreen';
 import SetPasswordScreen from './pages/SetPasswordScreen';
@@ -65,10 +66,8 @@ function AppContent() {
       }
     };
 
-    // 1. LocalStorage の手動ログイン変更を検知
     window.addEventListener('storage', syncUserSession);
 
-    // 2. Firebase Auth 側の状態監視（補助）
     const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
       if (authUser && !localStorage.getItem('petcpr_user')) {
         try {
@@ -197,50 +196,99 @@ function AppContent() {
     }
   };
 
-  const handleSelectDiag = (qId, choiceIdx) => {
-    setDiagAnswers({ ...diagAnswers, [qId]: choiceIdx });
+  // 選択肢および記述式の回答保持
+  const handleSelectDiag = (qId, val) => {
+    setDiagAnswers(prev => ({ ...prev, [qId]: val }));
   };
 
+  // 診断実行処理
   const handleRunDiagnostic = async () => {
-    const unanswered = diagQuestions.some(q => diagAnswers[q.id] === undefined);
-    if (unanswered) return alert("すべての設問にお答えください。");
-
-    let isPassed = true;
-    const finalAnswersLog = [];
-
-    diagQuestions.forEach(q => {
-      const selectedIdx = diagAnswers[q.id];
-      const selectedChoice = q.choices[selectedIdx];
-      if (selectedChoice && !selectedChoice.isQualified) isPassed = false;
-      finalAnswersLog.push({
-        questionText: q.questionText,
-        selectedChoiceText: selectedChoice ? selectedChoice.text : '未指定'
-      });
+    // 1. 必須設問のチェック
+    const unansweredRequired = diagQuestions.some(q => {
+      const isReq = q.isRequired ?? q.required ?? false;
+      const answer = diagAnswers[q.id];
+      return isReq && (answer === undefined || answer === null || String(answer).trim() === '');
     });
 
-    if (isPassed) {
-      setDiagResultText({
-        title: diagSettings?.successTitle || "🎉 受講資格をクリアしています！",
-        content: diagSettings?.successContent || "<p>あなたにはエデュケーターコースの受講資格が十分にあります。ぜひお申し込みください！</p>",
-        isPassed: true
-      });
-    } else {
-      setDiagResultText({
-        title: diagSettings?.failTitle || "⚠️ 受講要件をご確認ください",
-        content: diagSettings?.failContent || "<p>現在の回答内容では、一部受講要件を満たしていない可能性がございます。まずはベーシックコースの受講をお勧めします。</p>",
-        isPassed: false
-      });
+    if (unansweredRequired) {
+      alert('必須の設問にすべてお答えください。');
+      return null;
     }
 
+    // 2. 判定処理（選択肢と記述式の両方に対応）
+    let isPassed = true;
+    const finalAnswersLog = [];
+    const failedQuestions = []; // ❌ 不適合となった理由を記録する配列
+
+    diagQuestions.forEach((q, idx) => {
+      const answer = diagAnswers[q.id];
+      
+      const isTextType = q.type === 'text' || q.type === 'input' || (!q.choices || q.choices.length === 0);
+
+      if (isTextType) {
+        // 📝 記述式の場合
+        finalAnswersLog.push({
+          questionId: q.id,
+          questionNumber: idx + 1,
+          questionText: q.questionText,
+          type: 'text',
+          userAnswerText: answer ? String(answer).trim() : '未入力'
+        });
+      } else {
+        // 🔘 選択肢型の場合
+        const selectedChoice = q.choices ? q.choices[answer] : null;
+        const choiceText = selectedChoice ? selectedChoice.text : '未選択';
+
+        if (selectedChoice && selectedChoice.isQualified === false) {
+          isPassed = false;
+          // 不適合の理由（質問内容と選択した回答）を追加
+          failedQuestions.push({
+            questionNumber: idx + 1,
+            questionText: q.questionText,
+            selectedChoiceText: choiceText
+          });
+        }
+
+        finalAnswersLog.push({
+          questionId: q.id,
+          questionNumber: idx + 1,
+          questionText: q.questionText,
+          type: 'choice',
+          selectedChoiceIndex: answer,
+          selectedChoiceText: choiceText
+        });
+      }
+    });
+
+    // 3. Firestore への保存処理
     try {
       await addDoc(collection(db, "diagnostic_results"), {
-        respondentName: currentUser ? currentUser.name : "一般ビジター",
+        respondentName: currentUser ? (currentUser.displayName || currentUser.name) : "一般ビジター",
         respondentEmail: currentUser ? currentUser.email : "未ログイン",
         isPassed: isPassed,
         answers: finalAnswersLog,
+        failedQuestions: failedQuestions,
         createdAt: serverTimestamp()
       });
-    } catch (e) { console.error("診断結果ログの送信に失敗しました", e); }
+    } catch (error) {
+      console.error("DB保存エラー:", error);
+    }
+
+    // 4. 結果オブジェクトの組み立て（failedQuestions を含める）
+    const result = {
+      isPassed: isPassed,
+      title: isPassed 
+        ? (diagSettings?.successTitle || '🎉 受講資格をクリアしています！') 
+        : (diagSettings?.failTitle || '⚠️ 受講要件をご確認ください'),
+      content: isPassed
+        ? (diagSettings?.successContent || '<p>あなたにはエデュケーターコースの受講資格が十分にあります。ぜひお申し込みください！</p>')
+        : (diagSettings?.failContent || '<p>現在の回答内容では、一部受講要件を満たしていない可能性がございます。</p>'),
+      answersLog: finalAnswersLog,
+      failedQuestions: failedQuestions // 👈 ここに追加
+    };
+
+    setDiagResultText(result);
+    return result;
   };
 
   const rootPages = pages.filter(p => p.parentId === null && p.showInHeader);
@@ -290,6 +338,25 @@ function AppContent() {
             diagResultText={diagResultText}
           />
         } />
+
+        {/* 🔒 ログイン必須の資格診断ページ */}
+        <Route 
+          path="/diagnostic" 
+          element={
+            isLoggedIn ? (
+              <DiagUserScreen 
+                diagQuestions={diagQuestions}
+                diagAnswers={diagAnswers}
+                handleSelectDiag={handleSelectDiag}
+                handleRunDiagnostic={handleRunDiagnostic}
+                diagResultText={diagResultText}
+                currentUser={currentUser}
+              />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          } 
+        />
 
         {/* 💡 LoginScreen は独立したコンポーネントとして呼び出します */}
         <Route path="/login" element={<LoginScreen />} />
