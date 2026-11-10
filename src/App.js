@@ -37,6 +37,7 @@ function AppContent() {
   const [instagram, setInstagram] = useState([]); 
   const [licenseMaster, setLicenseMaster] = useState([]); 
   const [faqList, setFaqList] = useState([]); 
+  const [selectedNews, setSelectedNews] = useState(null);
 
   // 会員専用データ（掲示板・特典）
   const [bbsList, setBbsList] = useState([]);     
@@ -317,7 +318,53 @@ function AppContent() {
         isLoggedIn={isLoggedIn}
         handleLogout={handleLogoutAction}
       />
+{/* 📰 ニュース詳細モーダル */}
+{selectedNews && (
+  <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+    <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 relative shadow-2xl">
+      <button 
+        onClick={() => setSelectedNews(null)}
+        className="absolute top-4 right-4 text-gray-400 hover:text-gray-700 font-bold text-xl px-2"
+      >
+        ✕
+      </button>
+      
+      <span className="text-xs font-bold text-red-600 bg-red-50 px-2.5 py-1 rounded">
+        {selectedNews.accessControl?.isLimited ? '会員限定' : 'NEWS'}
+      </span>
+      <p className="text-xs text-gray-400 mt-3">
+        📅 {selectedNews.publishedAt?.toDate ? selectedNews.publishedAt.toDate().toLocaleDateString('ja-JP') : '日付未定'}
+      </p>
+      
+      <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mt-1 mb-6">
+        {selectedNews.title}
+      </h2>
 
+      {selectedNews.imageUrl && !selectedNews.imageUrl.includes('placehold.co') && (
+        <img 
+          src={selectedNews.imageUrl} 
+          alt={selectedNews.title} 
+          className="w-full h-64 object-cover rounded-lg mb-6 shadow-sm"
+        />
+      )}
+
+      {/* 💡 HTMLまたはテキストで保存された本文を描画 */}
+      <div 
+        className="text-gray-700 text-sm sm:text-base leading-relaxed prose max-w-none"
+        dangerouslySetInnerHTML={{ __html: selectedNews.content }}
+      />
+
+      <div className="mt-8 pt-4 border-t border-gray-100 text-right">
+        <button 
+          onClick={() => setSelectedNews(null)}
+          className="px-6 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold text-sm rounded-lg transition-colors"
+        >
+          閉じる
+        </button>
+      </div>
+    </div>
+  </div>
+)}
       <Routes>
         <Route path="/" element={
           <HomeScreen 
@@ -325,6 +372,7 @@ function AppContent() {
             news={news} 
             instagram={instagram} 
             getInstaThumbnail={getInstaThumbnail} 
+            onSelectNews={setSelectedNews}
           />
         } />
 

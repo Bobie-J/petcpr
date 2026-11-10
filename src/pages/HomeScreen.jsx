@@ -1,6 +1,6 @@
 import React from 'react';
 
-const HomeScreen = ({ loading, news, instagram, getInstaThumbnail }) => {
+const HomeScreen = ({ loading, news, instagram, getInstaThumbnail, onSelectNews }) => {
   return (
     <div>
       {/* ❤️ イメージ画像＋コンセプト */}
@@ -65,9 +65,12 @@ const HomeScreen = ({ loading, news, instagram, getInstaThumbnail }) => {
                           </h3>
                         </div>
                         <div className="border-t border-gray-100 pt-4 flex justify-end mt-4">
-                          <button onClick={() => alert("詳細表示機能へ切り替えます。")} className="text-xs font-bold text-red-600 flex items-center group-hover:translate-x-1 transition-transform">
-                            記事を読む <span className="ml-1">→</span>
-                          </button>
+                          <button 
+  onClick={() => onSelectNews && onSelectNews(item)} 
+  className="text-xs font-bold text-red-600 flex items-center group-hover:translate-x-1 transition-transform"
+>
+  記事を読む <span className="ml-1">→</span>
+</button>
                         </div>
                       </div>
                     </>
@@ -88,9 +91,12 @@ const HomeScreen = ({ loading, news, instagram, getInstaThumbnail }) => {
                         <div className="text-zinc-600 text-sm line-clamp-2 prose prose-sm mb-2" dangerouslySetInnerHTML={{ __html: item.content }} />
                       </div>
                       <div className="border-t border-gray-100 pt-4 flex justify-end mt-2">
-                        <button onClick={() => alert("詳細表示機能へ切り替えます。")} className="text-xs font-bold text-red-600 flex items-center group-hover:translate-x-1 transition-transform">
-                          記事を読む <span className="ml-1">→</span>
-                        </button>
+                        <button 
+  onClick={() => onSelectNews && onSelectNews(item)} 
+  className="text-xs font-bold text-red-600 flex items-center group-hover:translate-x-1 transition-transform"
+>
+  記事を読む <span className="ml-1">→</span>
+</button>
                       </div>
                     </div>
                   )}
